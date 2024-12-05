@@ -1,0 +1,143 @@
+pip install channels
+
+download redis
+>c drive
+>redis
+>redis-cli - open it
+>write : PING
+>output : PONG
+
+go to redis server file
+>service port 6379
+
+channels redis
+>pip install channel redis
+
+settigs.py
+>installed apps - channels
+>ASGI_APPLICATIONS="core.asgi.application"
+
+Now channel setup successfully
+-----------------------------------------
+
+Application folder
+------------------
+consumers.py - its just like views.py
+routing.py - web sockets requests are registered and established here
+urlrouter - http and web socket request handler 
+protocotyperouter - first request came here and then go to urlrouter
+
+asgi.py
+-------
+>copy the import paths
+>from project.consumers import *
+>ws_patterns=[path('ws/test/',TestConsumer),path('ws/new/',NewConsumer)]
+>application=ProtocolTypeRouter({'websocket': URLRouter(ws_pattern)})
+
+consumers.py
+--------
+import json
+from asgiref.sync import async_to_sync
+from channels.generic.websocket import AsyncWebsocketConsumer
+from channels.generic.websocket import AsyncJsonWebsocketConsumer
+
+class TestConsumer(WebsocketConsumer):
+      def connect(self):
+          self.room_name="Test_consumer"
+          self.room_group_name="Test_consumer_group"
+          async_to_sync(self.channel_layer.group_add)(
+          self.room_group_name,
+	  self.channel_name
+          )
+          self.accept()
+	  self.send(text_data=json.dumps({'status':'connected'}))
+
+      def receive(self,text_data):
+          self.send(text_data=json.dumps(text_data))
+
+      def disconnect(self,*args,**kwargs):
+          print("Disconnected")
+
+      def send_notification(self,event):
+	  print('send_notification')
+          data=json.loads(event.get('value'))
+	  self.send(text_data=json.dumps({'payload':event.get('value')}))
+
+class NewConsumer(AsyncJsonWebsocketConsumer):
+	async def connect(self):
+	  self.room_name="new_consumer"
+          self.room_group_name="new_consumer_group"
+          await(self.channel_layer.group_add)(
+          self.room_group_name,
+	  self.channel_name
+          )
+	await self.accept()
+	await self.send(text_data=json.dumps({'status':'connected'}))
+
+	async def receive(self,text_data):
+          await self.send(text_data=json.dumps(text_data))
+
+      	async def disconnect(self,*args,**kwargs):
+          await print("Disconnected")
+
+      	async def send_notification(self,event):
+          data=json.loads(event.get('value'))
+	  await self.send(text_data=json.dumps({'payload':event.get('value')}))
+
+
+websocketking website
+-------------------
+ws:/localhost:8000/ws/test/
+
+*backend to frontend data - self.send() used always
+*fronend to backend data - receive function used always
+
+models.py
+-----------------
+import json
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
+
+class Notification(models.Model):
+	user=models.ForiegnKey(User, on_delete=models.CASCADE)
+	notification=models.TextField(max_length=200)
+	is_seen=models.BooleanField(defaut=False)
+
+	
+	def save(self, *args, **kwargs):                 ------- code saver
+		channel_layer=get_channel_layer()
+		
+		notification_obj=Notifications.objects.filter(is_seen=False).count()
+		data={'count':notification_obj,'current_notification':self.notification}      ---- data came here
+		
+		async_to_sync(channel_layer.group_send)(
+		'test_consumer_group', {           --------- group name
+		'type':'send_notification' ,       --------- function created
+		'value':json.dumps(data)
+		}
+		)		
+ 
+		super(Notification,self).save(*args, **kwargs)
+
+
+views.py
+---------------
+import time 
+
+await def index(request):
+	for i in range(1,10):
+		channel_layer=get_channel_layer()
+		data={'count':i}
+		async_to_sync(channel_layer.group_send)(
+			'new_consumer_group', {           --------- group name
+			'type':'send_notification',        --------- function created
+			'value':json.dumps(data)
+			}
+		)
+		time.sleep(1)
+	return render(request,'index.html')
+
+
+urls.py
+------------
+path('',index)
